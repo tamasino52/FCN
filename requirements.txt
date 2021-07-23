@@ -1,0 +1,11 @@
+torch
+torchvision
+matplotlib
+tqdm
+tensorboardX
+opencv-python
+pyyaml
+easydict
+scipy
+pandas
+segmentation-models-pytorch
