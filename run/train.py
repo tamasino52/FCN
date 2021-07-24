@@ -23,12 +23,12 @@ import time
 import math
 from pathlib import Path
 
-from utils.utils import save_checkpoint, load_checkpoint, create_logger, load_model_state
-from core.config import config as cfg
+from lib.utils.utils import save_checkpoint, load_checkpoint, create_logger, load_model_state
+from lib.core.config import config as cfg
 from core.function import train, validate
 from utils.vis import save_torch_image
-from utils.vis import save_pred_batch_images
-from core.metrics import eval_metrics, AverageMeter
+from lib.utils.vis import save_pred_batch_images
+from lib.core.metrics import eval_metrics, AverageMeter
 import segmentation_models_pytorch as smp
 
 
