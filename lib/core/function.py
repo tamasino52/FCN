@@ -10,7 +10,7 @@ import copy
 import math
 import torch
 import numpy as np
-from utils.vis import save_pred_batch_images
+from lib.utils.vis import save_pred_batch_images
 
 logger = logging.getLogger(__name__)
 

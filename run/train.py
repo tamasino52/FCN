@@ -15,7 +15,7 @@ import pprint
 import logging
 import json
 import _init_paths
-import dataset
+import  lib.dataset
 from tqdm import tqdm
 import numpy as np
 import pickle
@@ -25,8 +25,8 @@ from pathlib import Path
 
 from lib.utils.utils import save_checkpoint, load_checkpoint, create_logger, load_model_state
 from lib.core.config import config as cfg
-from core.function import train, validate
-from utils.vis import save_torch_image
+from lib.core.function import train, validate
+from lib.utils.vis import save_torch_image
 from lib.utils.vis import save_pred_batch_images
 from lib.core.metrics import eval_metrics, AverageMeter
 import segmentation_models_pytorch as smp
@@ -42,7 +42,10 @@ def main():
     # 출력 경로 설정
     this_dir = Path(os.path.dirname(__file__))
     data_dir = (this_dir / '..' / cfg.DATA_DIR).resolve()
+    log_dir = (this_dir / '..' / cfg.LOG_DIR).resolve()
     output_dir = (this_dir / '..' / cfg.OUTPUT_DIR).resolve()
+
+
 
     # Cudnn 설정
     cudnn.benchmark = cfg.CUDNN.BENCHMARK
@@ -85,6 +88,11 @@ def main():
 
     # 모델 병렬화
     print('=> Paralleling models ..')
+    '''
+    질문 : 
+        1. gpu 개수 확인 여부
+        2. with torch.no_grad()를 사용하는 이유? : 일반적으로 gradients update를 하지 않으려고 사용하는 것으로 알고 있음
+    '''
     with torch.no_grad():
         model = torch.nn.DataParallel(model, device_ids=gpus).cuda()
 
@@ -98,24 +106,31 @@ def main():
     if cfg.TRAIN.RESUME:
         start_epoch, model, optimizer, precision = load_checkpoint(model, optimizer, output_dir)
 
+    writer_dict = {
+        'writer': SummaryWriter(log_dir=log_dir),
+        'train_global_steps': 0,
+        'valid_global_steps': 0,
+    }
+
     # 학습
     print('=> Training patch model ..')
     for epoch in range(start_epoch, end_epoch):
         # Training Loop
         batch_time = AverageMeter()
-        data_time = AverageMeter()
+        data_time = AverageMeter()      # 필요한 이유?
         losses = AverageMeter()
         model.train()
         end = time.time()
         criterion = nn.CrossEntropyLoss()
         for i, (input, target) in enumerate(train_loader):
             data_time.update(time.time() - end)
+            #  inplace modification error를 막기 위해 사용
             with torch.autograd.set_detect_anomaly(True):
                 # 예측
                 pred = model(input)
 
                 # 손실 계산
-                loss = criterion(input, target)
+                loss = criterion(pred, target) # loss = criterion(input, target)
                 losses.update(loss.item())
 
                 # 손실 역전파
@@ -124,7 +139,7 @@ def main():
                     loss.backward()
                 optimizer.step()
 
-                # 연산 시간 계산
+                # 연산 시간 계산 - 계산하는 이유?
                 batch_time.update(time.time() - end)
                 end = time.time()
 
@@ -142,6 +157,12 @@ def main():
                     loss=losses,
                     memory=gpu_memory_usage)
                 print(msg)
+
+                # 체크해
+                writer = writer_dict['writer']
+                global_steps = writer_dict['train_global_steps']
+                writer.add_scalar('train_loss', losses.val, global_steps)
+                writer_dict['train_global_steps'] = global_steps + 1
 
                 # 이미지 출력
                 prefix = '{}_{:05}'.format(os.path.join(output_dir, 'train'), i)
@@ -176,6 +197,7 @@ def main():
                 avg_jacc.update(metric[2])
                 avg_dice.update(metric[3])
 
+
                 # 학습 정보 출력
                 if step % cfg.PRINT_FREQ == 0:
                     gpu_memory_usage = torch.cuda.memory_allocated(0)
@@ -189,11 +211,20 @@ def main():
                         data_time=data_time, memory=gpu_memory_usage)
                     print(msg)
 
+                    # 체크해
+                    writer = writer_dict['writer']
+                    global_steps = writer_dict['valid_global_steps']
+                    writer.add_scalar('overall_acc', overall_acc.val, global_steps)
+                    writer.add_scalar('avg_per_class_acc', avg_per_class_acc.val, global_steps)
+                    writer.add_scalar('avg_jacc', avg_jacc.val, global_steps)
+                    writer.add_scalar('avg_dice', avg_dice.val, global_steps)
+                    writer_dict['train_global_steps'] = global_steps + 1
+
                     # 이미지로 출력
                     prefix = '{}_{:08}'.format(os.path.join(output_dir, 'valid'), step)
                     save_pred_batch_images(input, pred, target, prefix)
 
-            # 패치 단위 PSNR 평가
+            # 패치 단위 PSNR 평가 - 위에서 했는데 왜 또 하는가? (line: 179 - 183 -> line)
                 overall_acc.update(metric[0])
                 avg_per_class_acc.update(metric[1])
                 avg_jacc.update(metric[2])
@@ -228,6 +259,8 @@ def main():
     final_model_state_file = os.path.join(output_dir, 'patch_final_state.pth.tar')
     print('saving final model state to {}'.format(final_model_state_file))
     torch.save(model.module.state_dict(), final_model_state_file)
+
+    writer_dict['writer'].close()
 
 
 if __name__ == '__main__':

@@ -22,6 +22,7 @@ def create_logger(cfg, cfg_name, phase='train'):
     this_dir = Path(os.path.dirname(__file__))  ##
     root_output_dir = (this_dir / '..' / '..' / cfg.OUTPUT_DIR).resolve()  ##
     tensorboard_log_dir = (this_dir / '..' / '..' / cfg.LOG_DIR).resolve()
+
     # set up logger
     if not root_output_dir.exists():
         print('=> creating {}'.format(root_output_dir))
@@ -89,7 +90,7 @@ def load_checkpoint(model, optimizer, output_dir, filename='checkpoint.pth.tar')
         checkpoint = torch.load(file)
         start_epoch = checkpoint['epoch']
         precision = checkpoint['precision'] if 'precision' in checkpoint else 0
-        model.module.load_state_dict(checkpoint['state_dict'])
+        model.module.load_state_dict(checkpoint['state_dict']) # model.load_state_dict(checkpoint['state_dict']) 과의 차이점?
         optimizer.load_state_dict(checkpoint['optimizer'])
         print('=> load checkpoint {} (epoch {})'
               .format(file, start_epoch))
