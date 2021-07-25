@@ -20,6 +20,7 @@ from lib.core.config import get_model_name
 
 def create_logger(cfg, cfg_name, phase='train'):
     this_dir = Path(os.path.dirname(__file__))  ##
+    data_dir = (this_dir / '..' / cfg.DATA_DIR).resolve()
     root_output_dir = (this_dir / '..' / '..' / cfg.OUTPUT_DIR).resolve()  ##
     tensorboard_log_dir = (this_dir / '..' / '..' / cfg.LOG_DIR).resolve()
 
@@ -27,6 +28,10 @@ def create_logger(cfg, cfg_name, phase='train'):
     if not root_output_dir.exists():
         print('=> creating {}'.format(root_output_dir))
         root_output_dir.mkdir()
+
+    '''여기서부터 !!
+    fcn 8, 16, 32 model 불러오게 짜자
+    '''
 
     model, _ = get_model_name(cfg)
     cfg_name = os.path.basename(cfg_name).split('.')[0]
@@ -52,7 +57,7 @@ def create_logger(cfg, cfg_name, phase='train'):
     print('=> creating {}'.format(tensorboard_log_dir))
     tensorboard_log_dir.mkdir(parents=True, exist_ok=True)
 
-    return logger, str(final_output_dir), str(tensorboard_log_dir)
+    return logger, str(data_dir), str(final_output_dir), str(tensorboard_log_dir)
 
 
 def get_optimizer(cfg, model):

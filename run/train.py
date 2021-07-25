@@ -24,13 +24,23 @@ import math
 from pathlib import Path
 
 from lib.utils.utils import save_checkpoint, load_checkpoint, create_logger, load_model_state
-from lib.core.config import config as cfg
+from lib.core.config import config as cfg, update_config
 from lib.core.function import train, validate
 from lib.utils.vis import save_torch_image
 from lib.utils.vis import save_pred_batch_images
 from lib.core.metrics import eval_metrics, AverageMeter
 import segmentation_models_pytorch as smp
 
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Train keypoints network')
+    parser.add_argument(
+        '--cfg', help='experiment configure file name', required=True, type=str)
+
+    args, rest = parser.parse_known_args()
+    update_config(args.cfg)
+
+    return args
 
 def get_optimizer(model):
     lr = cfg.TRAIN.LR
@@ -40,11 +50,14 @@ def get_optimizer(model):
 
 def main():
     # 출력 경로 설정
-    this_dir = Path(os.path.dirname(__file__))
-    data_dir = (this_dir / '..' / cfg.DATA_DIR).resolve()
-    log_dir = (this_dir / '..' / cfg.LOG_DIR).resolve()
-    output_dir = (this_dir / '..' / cfg.OUTPUT_DIR).resolve()
+    #this_dir = Path(os.path.dirname(__file__))
+    #data_dir = (this_dir / '..' / cfg.DATA_DIR).resolve()
+    #log_dir = (this_dir / '..' / cfg.LOG_DIR).resolve()
+    #output_dir = (this_dir / '..' / cfg.OUTPUT_DIR).resolve()
 
+    args = parse_args()
+    logger, data_dir, output_dir, tb_log_dir = create_logger(
+        cfg, args.cfg, 'train')
 
 
     # Cudnn 설정
@@ -107,7 +120,7 @@ def main():
         start_epoch, model, optimizer, precision = load_checkpoint(model, optimizer, output_dir)
 
     writer_dict = {
-        'writer': SummaryWriter(log_dir=log_dir),
+        'writer': SummaryWriter(log_dir=tb_log_dir),
         'train_global_steps': 0,
         'valid_global_steps': 0,
     }
