@@ -11,10 +11,13 @@ import logging
 import os
 import time
 from pathlib import Path
-
+from PIL import Image
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from pandas import np
+from torchvision.datasets import VOCSegmentation
+
 from lib.core.config import get_model_name
 
 
@@ -29,8 +32,8 @@ def create_logger(cfg, cfg_name, phase='train'):
         print('=> creating {}'.format(root_output_dir))
         root_output_dir.mkdir()
 
-    '''여기서부터 !!
-    fcn 8, 16, 32 model 불러오게 짜자
+    '''
+    fcn 8, 16, 32 model 각 각 다르게..?
     '''
 
     model, _ = get_model_name(cfg)

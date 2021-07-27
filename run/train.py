@@ -32,16 +32,6 @@ from lib.core.metrics import eval_metrics, AverageMeter
 import segmentation_models_pytorch as smp
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description='Train keypoints network')
-    parser.add_argument(
-        '--cfg', help='experiment configure file name', required=True, type=str)
-
-    args, rest = parser.parse_known_args()
-    update_config(args.cfg)
-
-    return args
-
 def get_optimizer(model):
     lr = cfg.TRAIN.LR
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -49,36 +39,76 @@ def get_optimizer(model):
 
 
 def main():
-    # 출력 경로 설정
-    #this_dir = Path(os.path.dirname(__file__))
-    #data_dir = (this_dir / '..' / cfg.DATA_DIR).resolve()
-    #log_dir = (this_dir / '..' / cfg.LOG_DIR).resolve()
-    #output_dir = (this_dir / '..' / cfg.OUTPUT_DIR).resolve()
 
-    args = parse_args()
-    logger, data_dir, output_dir, tb_log_dir = create_logger(
-        cfg, args.cfg, 'train')
+    # 출력 경로 설정
+    this_dir = Path(os.path.dirname(__file__))
+    data_dir = (this_dir / '..' / cfg.DATA_DIR).resolve()
+    log_dir = (this_dir / '..' / cfg.LOG_DIR).resolve()
+    output_dir = (this_dir / '..' / cfg.OUTPUT_DIR).resolve()
+
+    # 폴더가 없다면 폴더 생성
+    data_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
 
     # Cudnn 설정
-    cudnn.benchmark = cfg.CUDNN.BENCHMARK
-    torch.backends.cudnn.deterministic = cfg.CUDNN.DETERMINISTIC
-    torch.backends.cudnn.enabled = cfg.CUDNN.ENABLED
-    torch.autograd.set_detect_anomaly(True)
-    gpus = [int(i) for i in cfg.GPUS.split(',')]
+    if torch.cuda.is_available():
+        DEVICE = torch.device('cuda')
+
+        cudnn.benchmark = cfg.CUDNN.BENCHMARK
+        torch.backends.cudnn.deterministic = cfg.CUDNN.DETERMINISTIC
+        torch.backends.cudnn.enabled = cfg.CUDNN.ENABLED
+        torch.autograd.set_detect_anomaly(True)
+        gpus = [int(i) for i in cfg.GPUS.split(',')]
+    else:
+        DEVICE = torch.device('cpu')
+
+    print(DEVICE)
+    print(torch.cuda.is_available())
+
 
     # 데이터셋 생성
     print('=> Loading dataset ..')
 
     # 데이터 변형 함수 정의 (Augmentation)
-    dataset = torchvision.datasets.VOCSegmentation(root=data_dir, download=True)
 
-    num_data = dataset.__len__()
-    num_valid = int(num_data * cfg.VALIDATION_RATIO)
-    num_train = num_data - num_valid
+    '''
+    TODO : 
+    
+    지금 이런 오류 뜸 : RuntimeError: stack expects each tensor to be equal size, but got [1, 500, 500] at entry 0 and [1, 375, 500] at entry 1
+            1. 오류에 대한 답변 : https://discuss.pytorch.org/t/runtimeerror-stack-expects-each-tensor-to-be-equal-size-but-got-3-224-224-at-entry-0-and-3-224-336-at-entry-3/87211
+            2. tar file에서 계속 extracting 하는거 기다리기 싫다 -> Data 있으면 그냥 바로 가져다 쓰는걸로 하자
+            3. transform 관련 공부하자
+    '''
+
+    transform = transforms.Compose([transforms.Resize((260, 260)),
+                                    transforms.ToTensor()])
+
+    # dataset = torchvision.datasets.VOCSegmentation(root=data_dir, download=True)
+
+    train_dataset = torchvision.datasets.VOCSegmentation(root=data_dir,
+                                                         image_set="train",
+                                                         download=True,
+                                                         transform=transform,
+                                                         target_transform=transform)
+    valid_dataset = torchvision.datasets.VOCSegmentation(root=data_dir,
+                                                         image_set="val",
+                                                         download=True,
+                                                         transform=transform,
+                                                         target_transform=transform)
+
+    # num_data = dataset.__len__()
+    # num_valid = int(num_data * cfg.VALIDATION_RATIO)
+    # num_train = num_data - num_valid
     num_classes = 21
+    #
+    # train_dataset, valid_dataset = random_split(dataset, [num_train, num_valid])
+    # print(train_dataset)
+    # print(type(train_dataset))
 
-    train_dataset, valid_dataset = random_split(dataset, [num_train, num_valid])
+    # data type error : tensor 형식으로 변환 필요
+
 
     # 데이터로더 적재
     train_loader = torch.utils.data.DataLoader(
@@ -104,10 +134,9 @@ def main():
     '''
     질문 : 
         1. gpu 개수 확인 여부
-        2. with torch.no_grad()를 사용하는 이유? : 일반적으로 gradients update를 하지 않으려고 사용하는 것으로 알고 있음
     '''
-    with torch.no_grad():
-        model = torch.nn.DataParallel(model, device_ids=gpus).cuda()
+
+    # model = torch.nn.DataParallel(model, device_ids=gpus).cuda()
 
     # 옵티마이저 설정
     model, optimizer = get_optimizer(model)
@@ -120,7 +149,7 @@ def main():
         start_epoch, model, optimizer, precision = load_checkpoint(model, optimizer, output_dir)
 
     writer_dict = {
-        'writer': SummaryWriter(log_dir=tb_log_dir),
+        'writer': SummaryWriter(log_dir=log_dir),
         'train_global_steps': 0,
         'valid_global_steps': 0,
     }
@@ -129,18 +158,28 @@ def main():
     print('=> Training patch model ..')
     for epoch in range(start_epoch, end_epoch):
         # Training Loop
+        print("epoch : ", epoch)
         batch_time = AverageMeter()
-        data_time = AverageMeter()      # 필요한 이유?
+        data_time = AverageMeter()
         losses = AverageMeter()
         model.train()
         end = time.time()
         criterion = nn.CrossEntropyLoss()
         for i, (input, target) in enumerate(train_loader):
+            print("input")
+            # print(input)
+            print(input.size())
+            print(target.size())
+            print(type(input))
             data_time.update(time.time() - end)
             #  inplace modification error를 막기 위해 사용
             with torch.autograd.set_detect_anomaly(True):
                 # 예측
                 pred = model(input)
+                print("pred")
+                print(pred)
+                print(pred.shape)
+
 
                 # 손실 계산
                 loss = criterion(pred, target) # loss = criterion(input, target)
