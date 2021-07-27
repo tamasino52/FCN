@@ -15,28 +15,39 @@ import pprint
 import logging
 import json
 import _init_paths
-import  lib.dataset
+import dataset
 from tqdm import tqdm
 import numpy as np
 import pickle
 import time
 import math
+import cv2
 from pathlib import Path
-
-from lib.utils.utils import save_checkpoint, load_checkpoint, create_logger, load_model_state
-from lib.core.config import config as cfg, update_config
-from lib.core.function import train, validate
-from lib.utils.vis import save_torch_image
-from lib.utils.vis import save_pred_batch_images
-from lib.core.metrics import eval_metrics, AverageMeter
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+from utils.utils import save_checkpoint, load_checkpoint, create_logger, load_model_state
+from core.config import config as cfg
+from core.function import train, validate
+from utils.vis import save_pred_batch_images
+from core.metrics import eval_metrics, AverageMeter
 import segmentation_models_pytorch as smp
+from torchvision.datasets import VOCSegmentation
+from torchvision.transforms.functional import to_tensor, to_pil_image
+from PIL import Image
+from skimage.segmentation import mark_boundaries
+import matplotlib.pylab as plt
+from albumentations import HorizontalFlip, Compose, Resize, Normalize
+import segmentation_models_pytorch as seg
+from dataset import voc
+from dataset.voc import myVOCSegmentation
+from core.metrics import eval_metrics
+from torchmetrics import IoU
 
 
 def get_optimizer(model):
     lr = cfg.TRAIN.LR
     optimizer = optim.Adam(model.parameters(), lr=lr)
     return model, optimizer
-
 
 def main():
 
@@ -73,44 +84,28 @@ def main():
 
     # 데이터 변형 함수 정의 (Augmentation)
 
-    '''
-    TODO : 
-    
-    지금 이런 오류 뜸 : RuntimeError: stack expects each tensor to be equal size, but got [1, 500, 500] at entry 0 and [1, 375, 500] at entry 1
-            1. 오류에 대한 답변 : https://discuss.pytorch.org/t/runtimeerror-stack-expects-each-tensor-to-be-equal-size-but-got-3-224-224-at-entry-0-and-3-224-336-at-entry-3/87211
-            2. tar file에서 계속 extracting 하는거 기다리기 싫다 -> Data 있으면 그냥 바로 가져다 쓰는걸로 하자
-            3. transform 관련 공부하자
-    '''
+    # transformation을 정의합니다.
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+    h, w = 224, 224
 
-    transform = transforms.Compose([transforms.Resize((260, 260)),
-                                    transforms.ToTensor()])
+    transform_tran = Compose([Resize(h, w),
+                              HorizontalFlip(p=0.5),
+                              Normalize(mean=mean, std=std)])
 
-    # dataset = torchvision.datasets.VOCSegmentation(root=data_dir, download=True)
+    transform_val = Compose([Resize(h, w),
+                             Normalize(mean=mean, std=std)
+                             ])
 
-    train_dataset = torchvision.datasets.VOCSegmentation(root=data_dir,
-                                                         image_set="train",
-                                                         download=True,
-                                                         transform=transform,
-                                                         target_transform=transform)
-    valid_dataset = torchvision.datasets.VOCSegmentation(root=data_dir,
-                                                         image_set="val",
-                                                         download=True,
-                                                         transform=transform,
-                                                         target_transform=transform)
+    train_dataset = myVOCSegmentation(cfg.DATA_DIR, year='2012', image_set='train', download=False,
+                                      transforms=transform_tran)
+    val_dataset = myVOCSegmentation(cfg.DATA_DIR, year='2012', image_set='val', download=False,
+                                    transforms=transform_val)
 
-    # num_data = dataset.__len__()
-    # num_valid = int(num_data * cfg.VALIDATION_RATIO)
-    # num_train = num_data - num_valid
-    num_classes = 21
-    #
-    # train_dataset, valid_dataset = random_split(dataset, [num_train, num_valid])
-    # print(train_dataset)
-    # print(type(train_dataset))
-
-    # data type error : tensor 형식으로 변환 필요
+    print('Dataset Length : train({}), validation({})'.format(len(train_dataset), len(val_dataset)))
 
 
-    # 데이터로더 적재
+    # 데이터로더 생성
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=cfg.TRAIN.BATCH_SIZE,
@@ -119,7 +114,7 @@ def main():
         pin_memory=True)
 
     valid_loader = torch.utils.data.DataLoader(
-        valid_dataset,
+        val_dataset,
         batch_size=cfg.TEST.BATCH_SIZE,
         shuffle=False,
         num_workers=cfg.WORKERS,
@@ -127,14 +122,8 @@ def main():
 
     # 모델 생성
     print('=> Constructing models ..')
-    model = torchvision.models.segmentation.fcn_resnet101(pretrained=True, num_classes=num_classes)
-
-    # 모델 병렬화
-    print('=> Paralleling models ..')
-    '''
-    질문 : 
-        1. gpu 개수 확인 여부
-    '''
+    model = seg.Unet(classes=21, activation='softmax2d')
+    model = model.cuda()
 
     # model = torch.nn.DataParallel(model, device_ids=gpus).cuda()
 
@@ -144,9 +133,11 @@ def main():
     start_epoch = cfg.TRAIN.BEGIN_EPOCH
     end_epoch = cfg.TRAIN.END_EPOCH
     best_precision = 0
-    step = 0
+
     if cfg.TRAIN.RESUME:
         start_epoch, model, optimizer, precision = load_checkpoint(model, optimizer, output_dir)
+
+    criterion = nn.BCELoss()
 
     writer_dict = {
         'writer': SummaryWriter(log_dir=log_dir),
@@ -155,57 +146,44 @@ def main():
     }
 
     # 학습
-    print('=> Training patch model ..')
+    print('=> Training model ..')
     for epoch in range(start_epoch, end_epoch):
         # Training Loop
-        print("epoch : ", epoch)
         batch_time = AverageMeter()
-        data_time = AverageMeter()
         losses = AverageMeter()
+
         model.train()
         end = time.time()
-        criterion = nn.CrossEntropyLoss()
         for i, (input, target) in enumerate(train_loader):
-            print("input")
-            # print(input)
-            print(input.size())
-            print(target.size())
-            print(type(input))
-            data_time.update(time.time() - end)
-            #  inplace modification error를 막기 위해 사용
-            with torch.autograd.set_detect_anomaly(True):
-                # 예측
-                pred = model(input)
-                print("pred")
-                print(pred)
-                print(pred.shape)
+            input = input.cuda()
+            target = target.cuda()
 
+            # 예측
+            pred = model(input)
 
-                # 손실 계산
-                loss = criterion(pred, target) # loss = criterion(input, target)
-                losses.update(loss.item())
+            # 손실 계산
+            loss = criterion(pred, target)
+            losses.update(loss.item())
 
-                # 손실 역전파
-                optimizer.zero_grad()
-                if loss > 0:
-                    loss.backward()
-                optimizer.step()
+            # 손실 역전파
+            optimizer.zero_grad()
+            if loss > 0:
+                loss.backward()
+            optimizer.step()
 
-                # 연산 시간 계산 - 계산하는 이유?
-                batch_time.update(time.time() - end)
-                end = time.time()
+            # 연산 시간 계산
+            batch_time.update(time.time() - end)
+            end = time.time()
 
             # 학습 정보 출력
-            if step % cfg.PRINT_FREQ == 0:
+            if i % cfg.PRINT_FREQ == 0:
                 gpu_memory_usage = torch.cuda.memory_allocated(0)
                 msg = 'Epoch: [{0}][{1}/{2}]\t' \
                       'Time: {batch_time.val:.3f}s ({batch_time.avg:.3f}s)\t' \
-                      'Data: {data_time.val:.3f}s ({data_time.avg:.3f}s)\t' \
                       'Loss: {loss.val:.6f} ({loss.avg:.6f})\t' \
                       'Memory {memory:.1f}'.format(
-                    epoch, step, len(train_loader),
+                    epoch, i, len(train_loader),
                     batch_time=batch_time,
-                    data_time=data_time,
                     loss=losses,
                     memory=gpu_memory_usage)
                 print(msg)
@@ -222,18 +200,16 @@ def main():
 
         # Validation Loop
         batch_time = AverageMeter()
-        data_time = AverageMeter()
-        overall_acc = AverageMeter()
-        avg_per_class_acc = AverageMeter()
-        avg_jacc = AverageMeter()
-        avg_dice = AverageMeter()
-
+        avg_iou = AverageMeter()
+        eval_metrics = IoU(21)
         model.eval()
 
         with torch.no_grad():
             end = time.time()
-            for j, (input, target) in enumerate(valid_loader):
-                data_time.update(time.time() - end)
+            for i, (input, target) in enumerate(valid_loader):
+
+                input = input.cuda()
+                target = target.cuda()
 
                 # 예측
                 pred = model(input)
@@ -242,25 +218,23 @@ def main():
                 batch_time.update(time.time() - end)
                 end = time.time()
 
-                # 평가
-                metric = eval_metrics(pred, target, num_classes)
-                overall_acc.update(metric[0])
-                avg_per_class_acc.update(metric[1])
-                avg_jacc.update(metric[2])
-                avg_dice.update(metric[3])
+                pred = pred.cpu()
+                target = target.cpu()
 
+                # 평가
+                metric = eval_metrics(pred, target.type(torch.int))
+                avg_iou.update(metric)
 
                 # 학습 정보 출력
-                if step % cfg.PRINT_FREQ == 0:
+                if i % cfg.PRINT_FREQ == 0:
                     gpu_memory_usage = torch.cuda.memory_allocated(0)
                     msg = 'Test: [{0}/{1}]\t' \
                           'Time: {batch_time.val:.3f}s ({batch_time.avg:.3f}s)\t' \
                           'Speed: {speed:.1f} samples/s\t' \
-                          'Data: {data_time.val:.3f}s ({data_time.avg:.3f}s)\t' \
                           'Memory {memory:.1f}'.format(
-                        step, len(valid_loader), batch_time=batch_time,
-                        speed=len(input) * input[0].size(0) / batch_time.val,
-                        data_time=data_time, memory=gpu_memory_usage)
+                        i, len(valid_loader), batch_time=batch_time,
+                        speed=len(input) / batch_time.val,
+                        memory=gpu_memory_usage)
                     print(msg)
 
                     # 체크해
@@ -273,25 +247,15 @@ def main():
                     writer_dict['train_global_steps'] = global_steps + 1
 
                     # 이미지로 출력
-                    prefix = '{}_{:08}'.format(os.path.join(output_dir, 'valid'), step)
+                    prefix = '{}_{:08}'.format(os.path.join(output_dir, 'valid'), i)
                     save_pred_batch_images(input, pred, target, prefix)
 
-            # 패치 단위 PSNR 평가 - 위에서 했는데 왜 또 하는가? (line: 179 - 183 -> line)
-                overall_acc.update(metric[0])
-                avg_per_class_acc.update(metric[1])
-                avg_jacc.update(metric[2])
-                avg_dice.update(metric[3])
-            msg = '(Evaluation)\tTOTAL_ACC: {0:.4f}\t' \
-                  'AVG_CLASS_ACC: {1:.4f}\t' \
-                  'AVG_JACC: {2:.4f}\t' \
-                  'AVG_DICE: {3:.4f}'.format(
-                      overall_acc.val,
-                      avg_per_class_acc.val,
-                      avg_jacc.val,
-                      avg_dice.val
-                  )
+            avg_iou.update(metric)
+
+            msg = '(Evaluation)\tMEAN IOU: {0:.4f}'.format(avg_iou.val)
             print(msg)
-            precision = overall_acc.val
+            precision = avg_iou.val
+
 
         if precision > best_precision:
             best_precision = precision
@@ -308,12 +272,11 @@ def main():
             'optimizer': optimizer.state_dict(),
         }, best_model, output_dir)
 
-    final_model_state_file = os.path.join(output_dir, 'patch_final_state.pth.tar')
+    final_model_state_file = os.path.join(output_dir)
     print('saving final model state to {}'.format(final_model_state_file))
     torch.save(model.module.state_dict(), final_model_state_file)
 
     writer_dict['writer'].close()
-
 
 if __name__ == '__main__':
     main()
