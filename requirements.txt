@@ -8,4 +8,6 @@ pyyaml
 easydict
 scipy
 pandas
+torchmetrics
 segmentation-models-pytorch
+albumentations

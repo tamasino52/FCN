@@ -2,6 +2,7 @@
 """
 
 import torch
+import torchmetrics
 
 EPS = 1e-10
 
@@ -88,6 +89,7 @@ def dice_coefficient(hist):
     return avg_dice
 
 
+
 def eval_metrics(true, pred, num_classes):
     """Computes various segmentation metrics on 2D feature maps.
     Args:
@@ -101,6 +103,7 @@ def eval_metrics(true, pred, num_classes):
         avg_jacc: the jaccard index.
         avg_dice: the dice coefficient.
     """
+
     hist = torch.zeros((num_classes, num_classes))
     for t, p in zip(true, pred):
         hist += _fast_hist(t.flatten(), p.flatten(), num_classes)
