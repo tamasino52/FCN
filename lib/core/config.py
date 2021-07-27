@@ -54,7 +54,7 @@ config.TRAIN.NESTEROV = False
 config.TRAIN.GAMMA1 = 0.99
 config.TRAIN.GAMMA2 = 0.0
 
-config.TRAIN.BATCH_SIZE = 4
+config.TRAIN.BATCH_SIZE = 8
 config.TRAIN.SHUFFLE = True
 config.TRAIN.BEGIN_EPOCH = 0
 config.TRAIN.END_EPOCH = 200
@@ -65,7 +65,7 @@ config.TRAIN.LR_FACTOR = 0.1
 
 # Test parameter
 config.TEST = edict()
-config.TEST.BATCH_SIZE = 4
+config.TEST.BATCH_SIZE = 8
 config.TEST.STATE = 'best'
 config.TEST.FLIP_TEST = False
 config.TEST.POST_PROCESS = False

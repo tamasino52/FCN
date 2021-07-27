@@ -182,8 +182,11 @@ def main():
                 batch_time.update(time.time() - end)
                 end = time.time()
 
+                pred = pred.cpu()
+                target = target.cpu()
+
                 # 평가
-                metric = eval_metrics(pred, target)
+                metric = eval_metrics(pred, target.type(torch.int))
                 avg_iou.update(metric)
 
                 # 학습 정보 출력
@@ -200,7 +203,7 @@ def main():
 
             avg_iou.update(metric)
 
-            msg = '(Evaluation)\tMEAN ACC: {0:.4f}'.format(avg_iou.val)
+            msg = '(Evaluation)\tMEAN IOU: {0:.4f}'.format(avg_iou.val)
             print(msg)
             precision = avg_iou.val
 
@@ -214,7 +217,7 @@ def main():
 
         save_checkpoint({
             'epoch': epoch + 1,
-            'state_dict': model.module.state_dict(),
+            'state_dict': model.state_dict(),
             'precision': best_precision,
             'optimizer': optimizer.state_dict(),
         }, best_model, output_dir)
