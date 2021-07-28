@@ -44,7 +44,6 @@ VOC_CLASSES = [
     "tv/monitor",
 ]
 
-
 VOC_COLORMAP = [
     [0, 0, 0],
     [128, 0, 0],

@@ -27,7 +27,6 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from utils.utils import save_checkpoint, load_checkpoint, create_logger, load_model_state
 from core.config import config as cfg
-from core.function import train, validate
 from utils.vis import save_pred_batch_images
 from core.metrics import eval_metrics, AverageMeter
 import segmentation_models_pytorch as smp
@@ -46,7 +45,8 @@ from torchmetrics import IoU
 
 def get_optimizer(model):
     lr = cfg.TRAIN.LR
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    optimizer = optim.SGD(model.parameters(), lr, momentum=0.99)
+    #optimizer = optim.Adam(model.parameters(), lr=lr, eps=0.0)
     return model, optimizer
 
 
@@ -100,7 +100,7 @@ def main():
 
     # 모델 생성
     print('=> Constructing models ..')
-    model = seg.Unet(classes=21, activation='softmax2d')
+    model = torchvision.models.segmentation.fcn_resnet101(pretrained=True, progress=True)
     model = model.cuda()
 
     # 옵티마이저 설정
@@ -114,7 +114,7 @@ def main():
         start_epoch, model, optimizer, precision = load_checkpoint(model, optimizer, output_dir)
 
     criterion = nn.BCELoss()
-
+    softmax = nn.Softmax2d()
     # 학습
     print('=> Training model ..')
     for epoch in range(start_epoch, end_epoch):
@@ -129,9 +129,10 @@ def main():
             target = target.cuda()
 
             # 예측
-            pred = model(input)
+            pred = model(input)["out"]
 
             # 손실 계산
+            pred = softmax(pred)
             loss = criterion(pred, target)
             losses.update(loss.item())
 
@@ -140,6 +141,10 @@ def main():
             if loss > 0:
                 loss.backward()
             optimizer.step()
+
+            input = input.cpu()
+            target = target.cpu()
+            pred = pred.cpu()
 
             # 연산 시간 계산
             batch_time.update(time.time() - end)
@@ -159,8 +164,14 @@ def main():
                 print(msg)
 
                 # 이미지 출력
-                #prefix = '{}_{:05}'.format(os.path.join(output_dir, 'train'), i)
-                #save_pred_batch_images(input, pred, target, prefix)
+                input = voc.re_normalize(input)
+                VOC_PALETTE = torch.tensor(voc.VOC_COLORMAP, dtype=torch.float) / 255
+                prefix = '{}_{:05}'.format(os.path.join(output_dir, 'train'), i)
+                pred = torch.argmax(pred, dim=1)
+                pred = VOC_PALETTE[pred].permute(0,3,1,2)
+                target = torch.argmax(target, dim=1)
+                target = VOC_PALETTE[target].permute(0,3,1,2)
+                save_pred_batch_images(input, pred, target, prefix)
 
         # Validation Loop
         batch_time = AverageMeter()
@@ -176,7 +187,7 @@ def main():
                 target = target.cuda()
 
                 # 예측
-                pred = model(input)
+                pred = model(input)["out"]
 
                 # 연산 시간 계산
                 batch_time.update(time.time() - end)
@@ -200,6 +211,16 @@ def main():
                         speed=len(input) / batch_time.val,
                         memory=gpu_memory_usage)
                     print(msg)
+
+                    # 이미지 출력
+                    input = voc.re_normalize(input)
+                    VOC_PALETTE = torch.tensor(voc.VOC_COLORMAP, dtype=torch.float) / 255
+                    prefix = '{}_{:05}'.format(os.path.join(output_dir, 'valid'), i)
+                    pred = torch.argmax(pred, dim=1)
+                    pred = VOC_PALETTE[pred].permute(0, 3, 1, 2)
+                    target = torch.argmax(target, dim=1)
+                    target = VOC_PALETTE[target].permute(0, 3, 1, 2)
+                    save_pred_batch_images(input, pred, target, prefix)
 
             avg_iou.update(metric)
 
