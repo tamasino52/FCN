@@ -1,6 +1,7 @@
 import numpy as np
 import cv2
 import os
+import matplotlib.pyplot as plt
 import torchvision.transforms.functional as TF
 import torch
 
@@ -82,6 +83,8 @@ def save_pred_batch_images(input_img, pred_img, target_img, prefix, normalize=Fa
 
     imwrite(file_name, grid_image)
 
+    return grid_image
+
 
 def save_numpy_image(config, img, prefix, normalize=False):
     file_name = prefix + ".png"
@@ -107,3 +110,9 @@ def save_torch_image(config, img, prefix, normalize=False):
         .permute(1, 2, 0) \
         .cpu().numpy()
     imwrite(file_name, img)
+
+def custom_imshow(img):
+    img = img.numpy()
+    plt.imshow(np.transpose(img, (1, 2, 0)))
+    plt.show()
+

@@ -15,7 +15,7 @@ import _init_paths # 이거 사용이 왜 안될까?
 import pprint
 import logging
 import json
-import dataset
+import lib.dataset
 from tqdm import tqdm
 import numpy as np
 import pickle
@@ -35,10 +35,12 @@ from torchvision.datasets import VOCSegmentation
 from torchvision.transforms.functional import to_tensor, to_pil_image
 from PIL import Image
 from skimage.segmentation import mark_boundaries
-import matplotlib.pylab as plt
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+
 from albumentations import HorizontalFlip, Compose, Resize, Normalize
 import segmentation_models_pytorch as seg
-# from dataset.voc import myVOCSegmentation
+from lib.dataset.voc import myVOCSegmentation
 from lib.core.metrics import eval_metrics
 from torchmetrics import IoU
 
@@ -47,6 +49,11 @@ def get_optimizer(model):
     lr = cfg.TRAIN.LR
     optimizer = optim.Adam(model.parameters(), lr=lr)
     return model, optimizer
+
+def custom_imshow(img):
+    img = img.numpy()
+    plt.imshow(np.transpose(img, (1, 2, 0)))
+    plt.show()
 
 def main():
 
@@ -96,9 +103,9 @@ def main():
                              Normalize(mean=mean, std=std)
                              ])
 
-    train_dataset = VOCSegmentation(cfg.DATA_DIR, year='2012', image_set='train', download=True,
+    train_dataset = myVOCSegmentation(cfg.DATA_DIR, year='2012', image_set='train', download=True,
                                       transforms=transform_tran)
-    val_dataset = VOCSegmentation(cfg.DATA_DIR, year='2012', image_set='val', download=True,
+    val_dataset = myVOCSegmentation(cfg.DATA_DIR, year='2012', image_set='val', download=True,
                                     transforms=transform_val)
 
     print('Dataset Length : train({}), validation({})'.format(len(train_dataset), len(val_dataset)))
@@ -187,7 +194,6 @@ def main():
                     memory=gpu_memory_usage)
                 print(msg)
 
-                # 체크해
                 writer = writer_dict['writer']
                 global_steps = writer_dict['train_global_steps']
                 writer.add_scalar('train_loss', losses.val, global_steps)
@@ -195,7 +201,9 @@ def main():
 
                 # 이미지 출력
                 prefix = '{}_{:05}'.format(os.path.join(output_dir, 'train'), i)
-                save_pred_batch_images(input, pred, target, prefix)
+                grid_iamge = save_pred_batch_images(input, pred, target, prefix)
+                cv2.imshow("Images", grid_iamge)
+
 
         # Validation Loop
         batch_time = AverageMeter()
@@ -236,18 +244,16 @@ def main():
                         memory=gpu_memory_usage)
                     print(msg)
 
-                    # 체크해
                     writer = writer_dict['writer']
                     global_steps = writer_dict['valid_global_steps']
-                    writer.add_scalar('overall_acc', overall_acc.val, global_steps)
-                    writer.add_scalar('avg_per_class_acc', avg_per_class_acc.val, global_steps)
-                    writer.add_scalar('avg_jacc', avg_jacc.val, global_steps)
-                    writer.add_scalar('avg_dice', avg_dice.val, global_steps)
+                    writer.add_scalar('batch_time', batch_time.val, global_steps)
+                    writer.add_scalar('avg_iou', avg_iou.val, global_steps)
                     writer_dict['train_global_steps'] = global_steps + 1
 
                     # 이미지로 출력
                     prefix = '{}_{:08}'.format(os.path.join(output_dir, 'valid'), i)
-                    save_pred_batch_images(input, pred, target, prefix)
+                    grid_iamge = save_pred_batch_images(input, pred, target, prefix)
+                    cv2.imshow("Images", grid_iamge)
 
             avg_iou.update(metric)
 
