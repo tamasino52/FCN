@@ -59,7 +59,7 @@ config.TRAIN.SHUFFLE = True
 config.TRAIN.BEGIN_EPOCH = 0
 config.TRAIN.END_EPOCH = 200
 config.TRAIN.RESUME = True
-config.TRAIN.LR = 0.001
+config.TRAIN.LR = 0.002
 config.TRAIN.LR_STEP = [90, 110]
 config.TRAIN.LR_FACTOR = 0.1
 
