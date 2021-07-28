@@ -65,7 +65,7 @@ config.TRAIN.LR_FACTOR = 0.1
 
 # Test parameter
 config.TEST = edict()
-config.TEST.BATCH_SIZE = 8
+config.TEST.BATCH_SIZE = 1
 config.TEST.STATE = 'best'
 config.TEST.FLIP_TEST = False
 config.TEST.POST_PROCESS = False
