@@ -25,6 +25,8 @@ import cv2
 from pathlib import Path
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+
+from lib.dataset import voc
 from lib.utils.utils import save_checkpoint, load_checkpoint, create_logger, load_model_state
 from lib.core.config import config as cfg
 from lib.core import function
@@ -47,7 +49,8 @@ from torchmetrics import IoU
 
 def get_optimizer(model):
     lr = cfg.TRAIN.LR
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    optimizer = optim.SGD(model.parameters(), lr, momentum=0.99)
+    # optimizer = optim.Adam(model.parameters(), lr=lr, eps=0.0)
     return model, optimizer
 
 def custom_imshow(img):
@@ -59,12 +62,12 @@ def main():
 
     # 출력 경로 설정
     this_dir = Path(os.path.dirname(__file__))
-    data_dir = (this_dir / '..' / cfg.DATA_DIR).resolve()
+    # data_dir = (this_dir / '..' / cfg.DATA_DIR).resolve()
     log_dir = (this_dir / '..' / cfg.LOG_DIR).resolve()
     output_dir = (this_dir / '..' / cfg.OUTPUT_DIR).resolve()
 
     # 폴더가 없다면 폴더 생성
-    data_dir.mkdir(parents=True, exist_ok=True)
+    # data_dir.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -128,8 +131,8 @@ def main():
 
     # 모델 생성
     print('=> Constructing models ..')
-    model = seg.Unet(classes=21, activation='softmax2d')
-    model = model.cuda()
+    model = torchvision.models.segmentation.fcn_resnet101(pretrained=True, progress=True)
+    model = model.to(DEVICE)
 
     # model = torch.nn.DataParallel(model, device_ids=gpus).cuda()
 
@@ -144,6 +147,8 @@ def main():
         start_epoch, model, optimizer, precision = load_checkpoint(model, optimizer, output_dir)
 
     criterion = nn.BCELoss()
+
+    softmax = nn.Softmax2d()
 
     writer_dict = {
         'writer': SummaryWriter(log_dir=log_dir),
@@ -161,13 +166,14 @@ def main():
         model.train()
         end = time.time()
         for i, (input, target) in enumerate(train_loader):
-            input = input.cuda()
-            target = target.cuda()
+            input = input.to(DEVICE)
+            target = target.to(DEVICE)
 
             # 예측
-            pred = model(input)
+            pred = model(input)["out"]
 
             # 손실 계산
+            pred = softmax(pred)
             loss = criterion(pred, target)
             losses.update(loss.item())
 
@@ -177,21 +183,36 @@ def main():
                 loss.backward()
             optimizer.step()
 
+            input = input.cpu()
+            target = target.cpu()
+            pred = pred.cpu()
+
             # 연산 시간 계산
             batch_time.update(time.time() - end)
             end = time.time()
 
+
+
             # 학습 정보 출력
             if i % cfg.PRINT_FREQ == 0:
-                gpu_memory_usage = torch.cuda.memory_allocated(0)
+                # gpu_memory_usage = torch.cuda.memory_allocated(0)
+                # msg = 'Epoch: [{0}][{1}/{2}]\t' \
+                #       'Time: {batch_time.val:.3f}s ({batch_time.avg:.3f}s)\t' \
+                #       'Loss: {loss.val:.6f} ({loss.avg:.6f})\t' \
+                #       'Memory {memory:.1f}'.format(
+                #     epoch, i, len(train_loader),
+                #     batch_time=batch_time,
+                #     loss=losses,
+                #     memory=gpu_memory_usage)
+                # print(msg)
+
+
                 msg = 'Epoch: [{0}][{1}/{2}]\t' \
                       'Time: {batch_time.val:.3f}s ({batch_time.avg:.3f}s)\t' \
-                      'Loss: {loss.val:.6f} ({loss.avg:.6f})\t' \
-                      'Memory {memory:.1f}'.format(
+                      'Loss: {loss.val:.6f} ({loss.avg:.6f})\t'.format(
                     epoch, i, len(train_loader),
                     batch_time=batch_time,
-                    loss=losses,
-                    memory=gpu_memory_usage)
+                    loss=losses)
                 print(msg)
 
                 writer = writer_dict['writer']
@@ -200,9 +221,17 @@ def main():
                 writer_dict['train_global_steps'] = global_steps + 1
 
                 # 이미지 출력
+                # prefix = '{}_{:05}'.format(os.path.join(output_dir, 'train'), i)
+                # grid_iamge = save_pred_batch_images(input, pred, target, prefix)
+                # cv2.imshow("Images", grid_iamge)
+                input = voc.re_normalize(input)
+                VOC_PALETTE = torch.tensor(voc.VOC_COLORMAP, dtype=torch.float) / 255
                 prefix = '{}_{:05}'.format(os.path.join(output_dir, 'train'), i)
-                grid_iamge = save_pred_batch_images(input, pred, target, prefix)
-                cv2.imshow("Images", grid_iamge)
+                pred = torch.argmax(pred, dim=1)
+                pred = VOC_PALETTE[pred].permute(0, 3, 1, 2)
+                target = torch.argmax(target, dim=1)
+                target = VOC_PALETTE[target].permute(0, 3, 1, 2)
+                save_pred_batch_images(input, pred, target, prefix)
 
 
         # Validation Loop
@@ -215,11 +244,11 @@ def main():
             end = time.time()
             for i, (input, target) in enumerate(valid_loader):
 
-                input = input.cuda()
-                target = target.cuda()
+                input = input.to(DEVICE)
+                target = target.to(DEVICE)
 
                 # 예측
-                pred = model(input)
+                pred = model(input)["out"]
 
                 # 연산 시간 계산
                 batch_time.update(time.time() - end)
@@ -234,14 +263,22 @@ def main():
 
                 # 학습 정보 출력
                 if i % cfg.PRINT_FREQ == 0:
-                    gpu_memory_usage = torch.cuda.memory_allocated(0)
+                    # gpu_memory_usage = torch.cuda.memory_allocated(0)
+                    # msg = 'Test: [{0}/{1}]\t' \
+                    #       'Time: {batch_time.val:.3f}s ({batch_time.avg:.3f}s)\t' \
+                    #       'Speed: {speed:.1f} samples/s\t' \
+                    #       'Memory {memory:.1f}'.format(
+                    #     i, len(valid_loader), batch_time=batch_time,
+                    #     speed=len(input) / batch_time.val,
+                    #     memory=gpu_memory_usage)
+                    # print(msg)
+
+
                     msg = 'Test: [{0}/{1}]\t' \
                           'Time: {batch_time.val:.3f}s ({batch_time.avg:.3f}s)\t' \
-                          'Speed: {speed:.1f} samples/s\t' \
-                          'Memory {memory:.1f}'.format(
+                          'Speed: {speed:.1f} samples/s\t'.format(
                         i, len(valid_loader), batch_time=batch_time,
-                        speed=len(input) / batch_time.val,
-                        memory=gpu_memory_usage)
+                        speed=len(input) / batch_time.val)
                     print(msg)
 
                     writer = writer_dict['writer']
@@ -251,9 +288,17 @@ def main():
                     writer_dict['train_global_steps'] = global_steps + 1
 
                     # 이미지로 출력
-                    prefix = '{}_{:08}'.format(os.path.join(output_dir, 'valid'), i)
-                    grid_iamge = save_pred_batch_images(input, pred, target, prefix)
-                    cv2.imshow("Images", grid_iamge)
+                    # prefix = '{}_{:08}'.format(os.path.join(output_dir, 'valid'), i)
+                    # grid_iamge = save_pred_batch_images(input, pred, target, prefix)
+                    # cv2.imshow("Images", grid_iamge)
+                    input = voc.re_normalize(input)
+                    VOC_PALETTE = torch.tensor(voc.VOC_COLORMAP, dtype=torch.float) / 255
+                    prefix = '{}_{:05}'.format(os.path.join(output_dir, 'train'), i)
+                    pred = torch.argmax(pred, dim=1)
+                    pred = VOC_PALETTE[pred].permute(0, 3, 1, 2)
+                    target = torch.argmax(target, dim=1)
+                    target = VOC_PALETTE[target].permute(0, 3, 1, 2)
+                    save_pred_batch_images(input, pred, target, prefix)
 
             avg_iou.update(metric)
 
