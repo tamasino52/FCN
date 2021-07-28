@@ -15,7 +15,6 @@ import pprint
 import logging
 import json
 import _init_paths
-import dataset
 from tqdm import tqdm
 import numpy as np
 import pickle
@@ -25,6 +24,8 @@ import cv2
 from pathlib import Path
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+
+from lib.models.fcn import FCNs, VGG_16
 from lib.utils.utils import save_checkpoint, load_checkpoint, create_logger, load_model_state
 from lib.core.config import config as cfg
 from lib.utils.vis import save_pred_batch_images
@@ -37,8 +38,8 @@ from skimage.segmentation import mark_boundaries
 import matplotlib.pylab as plt
 from albumentations import HorizontalFlip, Compose, Resize, Normalize
 import segmentation_models_pytorch as seg
-from dataset import voc
-from dataset.voc import myVOCSegmentation
+from lib.dataset import voc
+from lib.dataset.voc import myVOCSegmentation
 from lib.core.metrics import eval_metrics
 from torchmetrics import IoU
 
@@ -77,8 +78,8 @@ def main():
                              Normalize(mean=mean, std=std)
                              ])
 
-    train_dataset = myVOCSegmentation(cfg.DATA_DIR, year='2012', image_set='train', download=False, transforms=transform_tran)
-    val_dataset = myVOCSegmentation(cfg.DATA_DIR, year='2012', image_set='val', download=False, transforms=transform_val)
+    train_dataset = myVOCSegmentation(cfg.DATA_DIR, year='2012', image_set='train', download=True, transforms=transform_tran)
+    val_dataset = myVOCSegmentation(cfg.DATA_DIR, year='2012', image_set='val', download=True, transforms=transform_val)
 
     print('Dataset Length : train({}), validation({})'.format(len(train_dataset), len(val_dataset)))
 
@@ -99,7 +100,7 @@ def main():
 
     # 모델 생성
     print('=> Constructing models ..')
-    model = seg.FCN_s(classes=21, activation='softmax2d')
+    model = FCNs(n_class=21,pretrained_net=VGG_16())
     model = model.cuda()
 
     # 옵티마이저 설정
