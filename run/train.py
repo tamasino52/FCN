@@ -11,10 +11,10 @@ import torchvision.transforms.functional as TF
 from tensorboardX import SummaryWriter
 import argparse
 import os
+import _init_paths # 이거 사용이 왜 안될까?
 import pprint
 import logging
 import json
-import _init_paths
 import dataset
 from tqdm import tqdm
 import numpy as np
@@ -25,11 +25,11 @@ import cv2
 from pathlib import Path
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
-from utils.utils import save_checkpoint, load_checkpoint, create_logger, load_model_state
-from core.config import config as cfg
-from core.function import train, validate
-from utils.vis import save_pred_batch_images
-from core.metrics import eval_metrics, AverageMeter
+from lib.utils.utils import save_checkpoint, load_checkpoint, create_logger, load_model_state
+from lib.core.config import config as cfg
+from lib.core import function
+from lib.utils.vis import save_pred_batch_images
+from lib.core.metrics import eval_metrics, AverageMeter
 import segmentation_models_pytorch as smp
 from torchvision.datasets import VOCSegmentation
 from torchvision.transforms.functional import to_tensor, to_pil_image
@@ -38,9 +38,8 @@ from skimage.segmentation import mark_boundaries
 import matplotlib.pylab as plt
 from albumentations import HorizontalFlip, Compose, Resize, Normalize
 import segmentation_models_pytorch as seg
-from dataset import voc
-from dataset.voc import myVOCSegmentation
-from core.metrics import eval_metrics
+# from dataset.voc import myVOCSegmentation
+from lib.core.metrics import eval_metrics
 from torchmetrics import IoU
 
 
@@ -97,9 +96,9 @@ def main():
                              Normalize(mean=mean, std=std)
                              ])
 
-    train_dataset = myVOCSegmentation(cfg.DATA_DIR, year='2012', image_set='train', download=False,
+    train_dataset = VOCSegmentation(cfg.DATA_DIR, year='2012', image_set='train', download=True,
                                       transforms=transform_tran)
-    val_dataset = myVOCSegmentation(cfg.DATA_DIR, year='2012', image_set='val', download=False,
+    val_dataset = VOCSegmentation(cfg.DATA_DIR, year='2012', image_set='val', download=True,
                                     transforms=transform_val)
 
     print('Dataset Length : train({}), validation({})'.format(len(train_dataset), len(val_dataset)))
